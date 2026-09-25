@@ -15,38 +15,19 @@ them against a real reference before submitting).
 ---
 
 ## 1. What this models and why
-
-Section 3.2 needs mathematical/engineering models that support the detailed
-design, with explained assumptions, equations, derivation and verified
-results. The Primary Design Scenario selected for Part B is **S3 — Emergency
+ Primary Design Scenario selected for Part B is **S3 — Emergency
 Vehicle Priority**, which exercises the full closed control loop plus both
 override paths described in Section 2.6:
-
+ 
 ```
 Sensing → Central Optimisation → Signal Actuation      (baseline loop, always running)
         ↳ Emergency Vehicle Priority override           (can temporarily pre-empt the loop)
         ↳ Fault Detection / Fallback override            (activates on sensor/comms failure)
 ```
-
+ 
 The simulation builds a numerical model of each part of that loop and checks
 the result against the System Requirements table (SR1–SR8 / SR-F01–F07,
-SR-N01–N05) from Section 2.2. Two deliverables come out of it:
-
-1. **`itms_simulation.py`** — runs in plain Python (no notebook needed).
-   It does two things when you run it:
-   - **Live narrated run** (~90 simulated seconds): prints what the system
-     is doing, second by second, to the console — sensing updates, phase
-     changes, the emergency vehicle request and how conflict C1 is resolved,
-     and a fault → fallback → notification sequence. This is the "watch it
-     run" view.
-   - **Statistical run** (30 simulated minutes, run twice — fixed-time
-     baseline vs adaptive control): produces the numbers and charts used for
-     verification. Outputs `itms_verification_results.csv` and four PNG
-     figures.
-2. **Interactive browser demo** — a visual, clickable version of the same
-   logic (intersection view, live SR checklist, event log). Good for a
-   presentation or for building intuition; the Python script is what you'd
-   cite as the actual engineering model.
+SR-N01–N05) from Section 2.2. 
 
 ### How to run it
 
@@ -61,27 +42,20 @@ directory.
 
 ---
 
-## 2. Assumptions (state these explicitly in your report)
+## 2. Assumptions
 
 | Parameter | Value used | Basis |
 |---|---|---|
-| Saturation (discharge) flow, `s` | 0.50 veh/s/lane (~1800 veh/h) | Typical urban saturation flow range 1700–1900 veh/h/lane (HCM-style figure) |
+| Saturation (discharge) flow, `s` | 1900 veh/h/lane (0.528 veh/s) | Typical urban saturation flow in Melbourne|
 | Lost time per phase | 4.0 s | Typical start-up + clearance lost time, 3–5 s range |
 | Minimum green | 10 s (design) / scaled to 4 s in the browser demo for watchability | Safety/pedestrian floor |
 | Maximum green | 60 s (design) / 14 s scaled in demo | Fairness to other approaches |
-| Pedestrian clearance time | 7 s | Illustrative: crossing distance 10 m ÷ walking speed 1.2 m/s + ~1 s reaction. **Replace with the actual AS 1742.2 calculation for your assumed crossing width if you cite this.** |
-| Peak-period demand | Sinusoidal, average ≈ 0.11 veh/s/approach (per-approach y = q/s ≈ 0.22, sum Y ≈ 0.87 across 4 phases) | Kept deliberately sub-saturation (Y < 1) — see note below |
-| MTBF (controller) | 4000 h | Representative figure for a field ITS controller/roadside unit — **verify against a manufacturer datasheet or reliability study before citing** |
+| Pedestrian clearance time | 7 s | Illustrative: crossing distance 10 m ÷ walking speed 1.2 m/s + ~1 s reaction. |
+| Peak-period demand | Sinusoidal, average ≈ 0.21 veh/s/approach (per-approach y = q/s ≈ 0.40, sum Y ≈ 0.80 across the two phase pairs) | An oversaturated intersection (Y ≥ 1) has queues that grow without bound regardless of control strategy — that would make *any* comparison between fixed-time and adaptive control meaningless, since neither could keep up with demand. |
+| MTBF (controller) | 1500 h | Derived from Victorian traffic-signal availability of 99.8% and a 3 h critical-fault rectification benchmark: MTBF = A×MTTR/(1−A) ≈ 1497 h |
 | MTTR | 4 h | Representative figure — same caveat |
 | Simulation step | 1 s | Fine enough to resolve second-level SR targets without excessive runtime |
 
-**Why Y < 1 matters:** the demand is deliberately kept below saturation
-(sum of flow ratios ≈ 0.87, not >1). An oversaturated intersection (Y ≥ 1)
-has queues that grow without bound regardless of control strategy — that
-would make *any* comparison between fixed-time and adaptive control
-meaningless, since neither could keep up with demand. Keeping Y < 1 is what
-makes the 65–75% queue reduction result (Section 5) a genuine property of
-the *control strategy*, not an artefact of an impossible traffic condition.
 
 ---
 
@@ -280,27 +254,22 @@ more complete than it is:
 
 ---
 
-## 6. References to verify before citing
-
+## 6. References
 - Webster's optimal cycle length formula — [Webster, B.V. (1958), *Traffic
   Signal Settings*, Road Research Technical Paper No. 39, HMSO, London.](https://scispace.com/papers/traffic-signal-settings-3k4m8rw47b)
 - Saturation flow rate (~1900 veh/h/lane) — [Determination of Saturation Flows in
 Melbourne (2019)](https://australasiantransportresearchforum.org.au/wp-content/uploads/2022/03/ATRF2019_resubmission_29.pdf)
-- Pedestrian clearance time / walking speed — [Austroads Guide to Road Design Part 4A, 2023, page 28](https://www.scribd.com/document/681722685/AGRD04A-23-Guide-to-Road-Design-Part-4A-Unsignalised-and-Signalised-Intersections-Ed3-2)
+- Pedestrian clearance time / walking speed 1.2s — [Austroads Guide to Road Design Part 4A, 2023, page 28](https://www.scribd.com/document/681722685/AGRD04A-23-Guide-to-Road-Design-Part-4A-Unsignalised-and-Signalised-Intersections-Ed3-2)
+- [Austroads AGSM-16-Guide To Smart Motorways](https://pdfcoffee.com/agsm-16-guide-to-smart-motorways-pdf-pdf-free.html)
 - Vehicle-actuated control logic (extend/gap-out/max-out) — a traffic
   signal control textbook, e.g. Roess, R.P., Prassas, E.S. and McShane,
   W.R., *Traffic Engineering*.
-- MTBF/MTTR figures for ITS roadside controllers — a manufacturer
-  datasheet or a reliability study of deployed traffic-signal controllers,
-  if you can find one; otherwise state clearly that these are illustrative
-  assumptions.
+
+
 
 ---
 
 ## 7. Interactive demo
 
 A visual, clickable version of this closed loop (one intersection, live SR
-checklist, "send emergency vehicle" and "inject fault" buttons) is
-published separately as a Claude artifact — useful for a live walkthrough
-in your presentation, but the Python script above is the citable engineering
-model for the written report.
+checklist, "send emergency vehicle" and "inject fault" buttons).

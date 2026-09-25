@@ -1,0 +1,513 @@
+\documentclass{article}
+
+\usepackage[margin=2.5cm]{geometry}
+
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{subcaption}
+\usepackage{comment}
+\usepackage{parskip}
+\usepackage{setspace}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{array}
+\usepackage{tikz}
+\usepackage{markdown}
+\usepackage{fancyvrb}
+
+
+\newcounter{plantumldiagram}
+
+\newenvironment{plantuml}[3]
+{%
+    \stepcounter{plantumldiagram}%
+    \def\plantumlwidth{#1}%
+    \def\plantumlcaption{#2}%
+    \def\plantumllabel{#3}%
+    \VerbatimEnvironment
+    \begin{VerbatimOut}{PlantUML/generated/\jobname-plantuml-\theplantumldiagram.puml}%
+}
+{%
+    \end{VerbatimOut}%
+    \immediate\write18{java -jar "PlantUML/plantuml.jar" -tpng - scale 4 "PlantUML/generated/\jobname-plantuml-\theplantumldiagram.puml"}%
+    \begin{figure}[H]
+        \centering
+        \includegraphics[width=\plantumlwidth]{PlantUML/generated/\jobname-plantuml-\theplantumldiagram.png}
+        \caption{\plantumlcaption}
+        \label{\plantumllabel}
+    \end{figure}%
+}
+
+% Change scale to change the fidelity of image
+
+\title{3.2 Models}
+\author{Student Number: 4006409}
+\date{\today}
+
+
+
+\begin{document}
+
+\maketitle
+\section{Engineering Models and Mathematical Analysis}
+
+The primary design scenario, S3 — Emergency Vehicle Priority, was evaluated using a combination of traffic-flow, signal-timing, control-loop, emergency-priority, fault-response and reliability models. The Python simulation uses a 1-second simulation step over a 30-minute peak-period scenario. The engineering parameters are based on the assumptions implemented in the simulation.
+
+\subsection{Traffic Flow and Queueing Model}
+
+Each intersection approach is represented by an aggregate vehicle queue. Vehicle arrivals are modelled using a time-varying Poisson process. During a green phase, vehicles are discharged at the assumed saturation flow rate.
+
+The queue update is represented by:
+
+$$
+Q(t+\Delta t)=Q(t)+A(t)-D(t)
+$$
+
+where:
+* \(Q(t)\) = queue length at time \(t\)
+* \(A(t)\) = number of arriving vehicles during the time step
+* \(D(t)\) = number of departing vehicles
+* \(\Delta t=1\) s.
+
+The assumed saturation flow is:
+
+$$
+s=1900\text{ veh/h/lane}
+$$
+
+Converting this to vehicles per second:
+
+$$
+s=\frac{1900}{3600}
+$$
+
+$$
+\boxed{s=0.528\text{ veh/s}}
+$$
+
+Therefore, if an approach has a queue and remains green for 10 seconds, its theoretical maximum discharge is:
+
+$$
+D=s\times t
+$$
+
+$$
+D=0.528\times10=5.28\text{ vehicles}
+$$
+
+Thus, approximately 5.28 vehicles can be discharged per lane during a 10-second green interval, subject to the number of vehicles actually waiting.
+
+The simulation uses an average demand of approximately 0.21 veh/s per approach. The corresponding flow ratio is:
+
+$$
+y=\frac{q}{s}
+$$
+
+$$
+y=\frac{0.21}{0.528}
+$$
+
+$$
+\boxed{y\approx0.398}
+$$
+
+For the two opposing phase pairs, the combined critical flow ratio used by the model is approximately:
+
+$$
+Y=0.398+0.398
+$$
+
+$$
+\boxed{Y\approx0.796}
+$$
+
+This remains below the theoretical saturation condition \(Y=1\), allowing the fixed-time and adaptive control strategies to be compared without demand continually exceeding the available discharge capacity.
+
+\subsection{Fixed-Time Signal Timing — Webster Calculation}
+
+The fixed-time controller provides the baseline against which the adaptive controller is compared. The cycle length is calculated using Webster's optimal-cycle formula:
+
+$$
+C_o=\frac{1.5L+5}{1-Y}
+$$
+
+There are two signal phases and 4 seconds of lost time per phase:
+
+$$
+L=2\times4
+$$
+
+$$
+\boxed{L=8\text{ s}}
+$$
+
+Using \(Y\approx0.796\):
+
+$$
+C_o=\frac{1.5(8)+5}{1-0.796}
+$$
+
+$$
+C_o=\frac{17}{0.204}
+$$
+
+$$
+\boxed{C_o\approx83.3\text{ s}}
+$$
+
+The effective green time available after lost time is:
+
+$$
+G=C_o-L
+$$
+
+$$
+G=83.3-8
+$$
+
+$$
+\boxed{G\approx75.3\text{ s}}
+$$
+
+For approximately equal critical flow ratios, the green time is divided approximately equally between the two phases:
+
+$$
+g_i=G\frac{y_i}{Y}
+$$
+
+$$
+g_i=75.3\frac{0.398}{0.796}
+$$
+
+$$
+\boxed{g_i\approx37.7\text{ s}}
+$$
+
+Therefore, the fixed-time baseline uses an approximately 83-second cycle with approximately 38 seconds of effective green allocated to each phase.
+
+This provides a consistent reference strategy because the timing is calculated from the average demand and is not subsequently modified in response to short-term traffic changes.
+
+\subsection{Adaptive Vehicle-Actuated Control}
+
+The adaptive controller uses real-time traffic information rather than continuously recalculating a complete Webster cycle. The controller applies three main decisions:
+
+1. **Extend** — continue the green phase when vehicles remain queued.
+2. **Gap-out** — terminate the phase when the queue clears.
+3. **Max-out** — terminate the phase when the maximum green time is reached.
+
+The design parameters are:
+
+$$
+G_{min}=10\text{ s}
+$$
+
+$$
+G_{max}=60\text{ s}
+$$
+
+Therefore:
+
+$$
+10\leq G_i\leq60\text{ s}
+$$
+
+If an approach has no vehicles waiting, its phase can be skipped. This allows unused green time to be transferred to approaches experiencing demand.
+
+The purpose of this control strategy is therefore not simply to reduce the nominal cycle length. Instead, it dynamically allocates green time according to the observed traffic demand.
+
+\subsection{Sensing and Control-Loop Latency}
+
+The closed-loop controller consists of sensing, condition detection and transmission of revised timing information.
+
+The simulation models the following:
+
+* Data update interval: \(U\sim Uniform(3,5)\) s
+* Detection latency: \(|N(1.0,0.4)|\) s, capped at 2.5 s
+* Transmission latency: \(|N(0.9,0.4)|\) s, capped at 2.5 s.
+
+For the data-update interval:
+
+$$
+3\leq U\leq5\text{ s}
+$$
+
+Therefore the maximum permitted update interval is:
+
+$$
+U_{max}=5.0\text{ s}
+$$
+
+which directly corresponds to SR-F01.
+
+For the detection process, the nominal mean is approximately:
+
+$$
+\mu_{detect}=1.0\text{ s}
+$$
+
+against the requirement:
+
+$$
+T_{detect}\leq2.0\text{ s}
+$$
+
+The latest simulation produced a mean detection time of approximately 0.99 s and a worst-case value of 2.47 s. Consequently, the mean satisfies the requirement, while the observed worst case exceeds the 2-second limit. This identifies SR-F02 as a performance margin issue requiring further investigation rather than treating the mean value alone as sufficient evidence.
+
+\subsection{Emergency Vehicle Priority}
+
+Emergency priority follows the design precedence:
+
+$$
+\boxed{\text{Safety}>\text{Compliance}>\text{Emergency}>\text{Efficiency}}
+$$
+
+This is particularly important for conflict C1, where an emergency request occurs while pedestrian clearance is active.
+
+The pedestrian clearance interval is:
+
+$$
+T_{ped}=7\text{ s}
+$$
+
+If an emergency request occurs during this interval, the request is deferred until the clearance period has completed.
+
+For example, if an emergency request occurs with \(t_r\) seconds remaining in the clearance interval, the minimum additional waiting time is:
+
+$$
+T_{wait}=t_r
+$$
+
+Once:
+
+$$
+T_{ped}=0
+$$
+
+the emergency priority request can be granted.
+
+This prevents the pedestrian interval from being interrupted. Consequently:
+
+$$
+N_{pedestrian\ violations}=0
+$$
+
+and the simulation recorded:
+
+$$
+\boxed{SR\text{-}N01=0\text{ violations}}
+$$
+
+The emergency-request calculation is:
+
+$$
+P_{grant}=
+\frac{N_{granted}}{N_{requests}}\times100
+$$
+
+For the simulation:
+
+$$
+P_{grant}=
+\frac{N_{granted}}{N_{requests}}\times100
+=100\%
+$$
+
+Thus:
+
+$$
+\boxed{SR\text{-}F04=100\%}
+$$
+
+These results are primarily a verification of the implemented safety rule because emergency requests are deliberately deferred rather than rejected.
+
+\subsection{Fault Detection and Fallback}
+
+Fault response is modelled using three independent latency components:
+
+$$
+T_{detect}\sim |N(4.0,2.0)|
+$$
+
+$$
+T_{fallback}\sim |N(4.5,2.2)|
+$$
+
+$$
+T_{notify}\sim |N(14.0,6.0)|
+$$
+
+The values are capped at 9.8 seconds for detection and fallback and 29 seconds for notification so that the simulated system can be tested against its specified limits.
+
+The requirements are:
+
+$$
+T_{detect}\leq10\text{ s}
+$$
+
+$$
+T_{fallback}\leq10\text{ s}
+$$
+
+$$
+T_{notify}\leq30\text{ s}
+$$
+
+The latest simulation produced:
+
+$$
+T_{detect,worst}=8.20\text{ s}
+$$
+
+$$
+T_{fallback,worst}=5.23\text{ s}
+$$
+
+$$
+T_{notify,worst}=20.16\text{ s}
+$$
+
+Therefore:
+
+$$
+8.20<10
+$$
+
+$$
+5.23<10
+$$
+
+$$
+20.16<30
+$$
+
+All three fault-response timing requirements are satisfied in the simulation.
+
+Once fallback is activated, the affected intersection returns to the safe fixed-time strategy. This ensures that a single sensor or communications failure does not result in loss of traffic control.
+
+\subsection{Reliability and Availability Calculation}
+
+System availability is estimated using the standard steady-state relationship:
+
+$$
+A=\frac{MTBF}{MTBF+MTTR}
+$$
+
+The current simulation assumes:
+
+$$
+MTBF=1500\text{ h}
+$$
+
+$$
+MTTR=3\text{ h}
+$$
+
+Therefore:
+
+$$
+A=\frac{1500}{1500+3}
+$$
+
+$$
+A=\frac{1500}{1503}
+$$
+
+$$
+A=0.998004
+$$
+
+Converting to a percentage:
+
+$$
+A=0.998004\times100
+$$
+
+$$
+\boxed{A\approx99.80\%}
+$$
+
+The availability requirement is:
+
+$$
+A\geq99\%
+$$
+
+and therefore:
+
+$$
+99.80\%>99.00\%
+$$
+
+so the reliability requirement is satisfied by the analytical model.
+
+The relationship can also be rearranged to estimate MTBF from an assumed availability:
+
+$$
+MTBF=\frac{A\times MTTR}{1-A}
+$$
+
+For example, using a Victorian traffic-signal availability benchmark of approximately 99.8% and the assumed 3-hour restoration time:
+
+$$
+MTBF=\frac{0.998\times3}{1-0.998}
+$$
+
+$$
+MTBF=\frac{2.994}{0.002}
+$$
+
+$$
+\boxed{MTBF\approx1497\text{ h}}
+$$
+
+which is approximately 1500 hours and provides the basis for the simulation assumption.
+
+Importantly, the 1500-hour MTBF and 3-hour MTTR should be described as **engineering assumptions/calibration values**, rather than claiming they are measured average values for Victorian roadside controllers. The availability calculation is analytical and is separate from the discrete-event traffic simulation.
+
+\subsection{Queue-Reduction Performance Calculation}
+
+The adaptive and fixed-time controllers are compared using their average simulated queue lengths.
+
+The latest simulation produced:
+
+$$
+\bar Q_{fixed}=17.06\text{ vehicles}
+$$
+
+$$
+\bar Q_{adaptive}=13.85\text{ vehicles}
+$$
+
+The percentage reduction is calculated as:
+
+$$
+\text{Reduction}=
+\frac{\bar Q_{fixed}-\bar Q_{adaptive}}
+{\bar Q_{fixed}}\times100
+$$
+
+Substituting the simulation results:
+
+$$
+\text{Reduction}=
+\frac{17.06-13.85}{17.06}\times100
+$$
+
+$$
+=\frac{3.21}{17.06}\times100
+$$
+
+$$
+\boxed{\text{Reduction}\approx18.82\%}
+$$
+
+Thus, under the simulated traffic demand, the adaptive controller reduced the average queue length by approximately **18.8% relative to the fixed-time baseline**.
+
+This result represents the primary efficiency outcome of the simulation. It demonstrates that responding to current queue conditions can reduce average queued vehicles compared with a fixed-time plan calculated from average demand.
+
+
+\end{document}

@@ -23,6 +23,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="ITMS_Simulation.py" />
+    <Compile Include="Itms_Visual.py" />
   </ItemGroup>
   <ItemGroup>
     <InterpreterReference Include="Global|VisualStudio|ITMS" />

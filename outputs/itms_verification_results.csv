@@ -1,0 +1,12 @@
+Requirement,Target,Mean,Worst-case / Value,Status
+"SR-F01 data update interval (s, <=)",5.0,4.014141738679931,4.994651555978322,PASS
+"SR-F02 condition-change detection (s, <=)",2.0,0.9891169558910634,2.47498672059932,FAIL
+"SR-F03 revised timing transmitted (s, <=)",2.0,0.9037110043864194,1.9792161827269705,PASS
+SR-F04 emergency requests granted (%),100.0,100.0,100.0,PASS
+"SR-F05 priority status visible (s, <=)",2.0,0.8745618212966612,1.4790849075663073,PASS
+SR-N01 pedestrian clearance violations (count),0,0,0,PASS
+"SR-F06 fault detected (s, <=)",10.0,3.097253501835309,8.200921817901039,PASS
+"SR-F07 fallback activated (s, <=)",10.0,3.9489832670933067,5.228304912251326,PASS
+"SR-F06 fault notification issued (s, <=)",30.0,13.548211555615428,20.162421486380744,PASS
+"SR-N04 availability (%, >=)",99.0,99.8003992015968,99.8003992015968,PASS
+"Queue reduction, adaptive vs fixed-time (%)",,18.821451706879238,18.821451706879238,RESULT

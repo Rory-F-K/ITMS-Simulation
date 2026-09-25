@@ -11,7 +11,7 @@ System Requirements table (SR1-SR8 / SR-F01-F07, SR-N01-N05).
 Engineering models used (with sources noted in comments):
   1. Traffic flow / queueing model         -> HCM-style deterministic queue model
   2. Signal timing (fixed-time baseline)    -> Webster's optimal cycle formula (Webster, 1958)
-  3. Signal timing (adaptive/real-time)     -> Proportional (demand-responsive) green split
+  3. Signal timing (adaptive/real-time)     -> vehicle-actuated gap-out/max-out control
   4. Sensing / control loop latency         -> bounded stochastic latency model, verified vs SR-F01-F03
   5. Emergency priority + conflict C1       -> pedestrian clearance interval (AS 1742.2-style) precedence rule
   6. Fault detection & fallback             -> stochastic latency model, verified vs SR-F06/F07
@@ -25,11 +25,18 @@ where the margins are tight.
 
 import random
 import csv
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 
 random.seed(42)
 np.random.seed(42)
+
+# Output directory: a local "outputs" folder next to this script, created
+# automatically if it doesn't exist. (Change this if you'd rather write
+# somewhere else.)
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ----------------------------------------------------------------------
 # 1. ENGINEERING PARAMETERS (assumptions, with justification)
@@ -37,8 +44,8 @@ np.random.seed(42)
 DT = 1.0                      # simulation time step, s
 SIM_TIME = 1800                # 30-minute simulated peak period, s
 N_APPROACHES = 4                # N/S/E/W approach per intersection
-SATURATION_FLOW = 0.50          # veh/s/lane discharge rate during green
-                                 # (~1800 veh/h/lane; HCM 2010 typical urban saturation flow range 1700-1900 vph/lane)
+SATURATION_FLOW = 1900.0 / 3600.0  # veh/s/lane discharge rate during green (~0.528 veh/s)
+                                 # 1900 veh/h/lane -- upper end of the HCM 2010 typical urban saturation flow range (1700-1900 vph/lane)
 LOST_TIME_PER_PHASE = 4.0       # s, start-up + clearance lost time per phase (HCM typical 3-5 s)
 MIN_GREEN = 10.0                # s, minimum green (pedestrian/safety floor)
 MAX_GREEN = 60.0                # s, maximum green (fairness to other approaches)
@@ -47,8 +54,8 @@ N_INTERSECTIONS = 4              # intersections along the emergency vehicle's r
 
 # Reliability model inputs (typical values reported for field traffic-signal
 # controllers / ITS roadside units in transport engineering literature)
-MTBF_HOURS = 4000.0              # mean time between failures, h
-MTTR_HOURS = 4.0                 # mean time to repair/restore, h
+MTBF_HOURS = 1500.0              # mean time between failures, h
+MTTR_HOURS = 3.0                 # mean time to repair/restore, h
 
 SR_TARGETS = {
     "SR-F01 data update interval (s, <=)":            5.0,
@@ -69,25 +76,45 @@ SR_TARGETS = {
 #    L = total lost time = n_phases * lost_time_per_phase
 #    Y  = sum of critical flow ratios y_i = q_i / s_i
 #    g_i = (C_o - L) * y_i / Y         (proportional green split)
+#
+#    Opposite approaches (N+S, E+W) share a phase and run concurrently --
+#    a normal 2-phase signal -- rather than each approach getting its own
+#    exclusive phase. Two approaches running together are only as
+#    constrained as the more heavily loaded of the two, so the critical
+#    flow ratio for a shared phase is the LARGER of its two paired
+#    movements' y_i, not their sum (standard treatment for a shared
+#    through phase, e.g. HCM signalised-intersection methodology).
 # ----------------------------------------------------------------------
+APPROACHES_ORDER = ["N", "E", "S", "W"]
+PHASE_PAIRS = [(0, 2), (1, 3)]  # (N,S) and (E,W), indices into APPROACHES_ORDER
+
+
 def webster_cycle(flow_ratios, lost_time_per_phase=LOST_TIME_PER_PHASE):
-    n = len(flow_ratios)
+    """flow_ratios: list of 4 per-approach y_i = q_i/s_i, in APPROACHES_ORDER
+    (N,E,S,W). Returns (C_o, phase_greens) where phase_greens has length 2,
+    one green time per phase pair (PHASE_PAIRS[0]=N+S, PHASE_PAIRS[1]=E+W)."""
+    phase_y = [max(flow_ratios[i] for i in pair) for pair in PHASE_PAIRS]
+    n = len(phase_y)  # 2 phases
     L = n * lost_time_per_phase
-    Y = sum(flow_ratios)
+    Y = sum(phase_y)
     Y = min(Y, 0.95)  # keep the intersection under saturation (Y<1 required by the formula)
     C_o = (1.5 * L + 5) / (1 - Y)
     effective_green_total = C_o - L
-    greens = [max(MIN_GREEN, min(MAX_GREEN, effective_green_total * y / Y)) for y in flow_ratios]
-    return C_o, greens
+    phase_greens = [max(MIN_GREEN, min(MAX_GREEN, effective_green_total * y / Y)) for y in phase_y]
+    return C_o, phase_greens
 
 
 # ----------------------------------------------------------------------
 # 3. TRAFFIC ARRIVAL MODEL — time-varying demand with a peak, per approach
 # ----------------------------------------------------------------------
-def arrival_rate(t, base=0.09, amplitude=0.06, period=900.0, phase_offset=0.0):
+def arrival_rate(t, base=0.18, amplitude=0.09, period=900.0, phase_offset=0.0):
     """veh/s, sinusoidal demand profile representing a peak loading in the
     30-min window, plus small stochastic noise (captures normal demand
-    variability, not a full car-following/microsimulation model)."""
+    variability, not a full car-following/microsimulation model).
+    Calibrated so that, once opposite approaches are paired into a
+    2-phase signal (each pair's critical flow ratio is the LARGER of its
+    two approaches, not their sum -- see webster_cycle), the intersection
+    still sits close to Y~0.85, a realistic near-capacity peak load."""
     rate = base + amplitude * max(0.0, np.sin(2 * np.pi * (t + phase_offset) / period))
     return max(0.02, rate + np.random.normal(0, 0.01))
 
@@ -100,13 +127,11 @@ class Intersection:
         self.phase_offsets = [random.uniform(0, 200) for _ in range(n_approaches)]
         self.cum_arrivals = [0.0] * n_approaches
         self.cum_departures = [0.0] * n_approaches
-        self.current_phase = 0
+        self.current_phase = 0  # 0 = N+S pair green, 1 = E+W pair green
         self.phase_timer = 0.0
-        self.green_times = [20.0] * n_approaches
+        self.green_times = [20.0, 20.0]  # one per phase pair
         self.mode = "NORMAL"          # NORMAL | PED_HOLD | EMERGENCY | FALLBACK
         self.fault_active = False
-        self.arrivals_since_sense = [0.0] * n_approaches  # rolling counter used by the adaptive controller
-        self.smoothed_flow = [0.22] * n_approaches  # EMA of measured flow ratio (sensor-noise filter)
 
     def step_arrivals(self, t):
         for i in range(self.n):
@@ -114,21 +139,23 @@ class Intersection:
             arrivals = np.random.poisson(lam * DT)
             self.queues[i] += arrivals
             self.cum_arrivals[i] += arrivals
-            self.arrivals_since_sense[i] += arrivals
 
     def step_discharge(self):
-        """Discharge queue on the approach currently green."""
-        i = self.current_phase
+        """Discharge both approaches in the currently green phase pair
+        (e.g. N and S together), each served independently up to
+        saturation flow -- opposite through movements don't share a lane,
+        so both discharge concurrently rather than splitting capacity."""
         capacity = SATURATION_FLOW * DT
-        served = min(self.queues[i], capacity)
-        self.queues[i] -= served
-        self.cum_departures[i] += served
+        for i in PHASE_PAIRS[self.current_phase]:
+            served = min(self.queues[i], capacity)
+            self.queues[i] -= served
+            self.cum_departures[i] += served
 
     def advance_phase(self):
         self.phase_timer += DT
         if self.phase_timer >= self.green_times[self.current_phase]:
             self.phase_timer = 0.0
-            self.current_phase = (self.current_phase + 1) % self.n
+            self.current_phase = 1 - self.current_phase
 
 
 # ----------------------------------------------------------------------
@@ -155,8 +182,10 @@ def run_simulation(adaptive: bool, sense_interval_range=(3.0, 5.0)):
     next_sense_time = random.uniform(*sense_interval_range)
     latency_log = {"data_update": [], "detect": [], "transmit": []}
 
-    # Fixed-time baseline plan (static Webster split from long-run average flow)
-    avg_flow = [0.22, 0.22, 0.22, 0.22]  # y = q/s ~ 0.109/0.5
+    # Fixed-time baseline plan (static Webster split from long-run average flow).
+    # avg_flow is the average per-approach y=q/s implied by arrival_rate()'s
+    # base+amplitude*0.3183 (mean of a half-wave sine) divided by SATURATION_FLOW.
+    avg_flow = [0.40, 0.40, 0.40, 0.40]
     _, static_greens = webster_cycle(avg_flow)
 
     if not adaptive:
@@ -176,11 +205,12 @@ def run_simulation(adaptive: bool, sense_interval_range=(3.0, 5.0)):
         t = step * DT
         inter.step_arrivals(t)
 
-        i = inter.current_phase
-        # discharge the currently served approach
+        a1, a2 = PHASE_PAIRS[inter.current_phase]
+        # discharge both approaches in the currently served pair
         capacity = SATURATION_FLOW * DT
-        served = min(inter.queues[i], capacity)
-        inter.queues[i] -= served
+        for i in (a1, a2):
+            served = min(inter.queues[i], capacity)
+            inter.queues[i] -= served
         phase_elapsed += DT
 
         # Sensor polling cadence: this is the SR-F01/F02/F03 loop that
@@ -194,15 +224,11 @@ def run_simulation(adaptive: bool, sense_interval_range=(3.0, 5.0)):
             latency_log["transmit"].append(transmit_latency)
             next_sense_time = t + interval
 
-        gap_out = inter.queues[i] < 0.5 and phase_elapsed >= GAP_MIN_GREEN
+        gap_out = (inter.queues[a1] + inter.queues[a2]) < 1.0 and phase_elapsed >= GAP_MIN_GREEN
         max_out = phase_elapsed >= MAX_GREEN
         if gap_out or max_out:
-            # advance to the next approach that actually has demand
-            # (skip empty phases -- this is the source of the adaptive gain)
-            for _ in range(inter.n):
-                inter.current_phase = (inter.current_phase + 1) % inter.n
-                if inter.queues[inter.current_phase] > 0.5:
-                    break
+            # only 2 phase pairs, so advancing just toggles to the other one
+            inter.current_phase = 1 - inter.current_phase
             phase_elapsed = 0.0
 
         queue_history.append(sum(inter.queues))
@@ -297,7 +323,7 @@ def run_live_narrated():
     print("=" * 78)
 
     inter = Intersection(0)
-    inter.green_times = [15.0] * inter.n
+    inter.green_times = [15.0, 15.0]  # one per phase pair
     phase_elapsed = 0.0
     next_sense = random.uniform(1.5, 3.0)
 
@@ -380,38 +406,38 @@ def run_live_narrated():
                       f"of detection (target <=30s) -- {ok}")
 
         # ---- signal control ----
+        # opposite approaches (N+S, E+W) are paired and green together,
+        # except while an emergency vehicle is active -- then only its own
+        # approach is served, its paired opposite is held red too.
+        pedestrian_idx = APPROACHES_ORDER.index(pedestrian_approach)
         if ev_state == "active":
-            target_idx = APPROACHES_ORDER.index(pedestrian_approach)
-            if inter.current_phase != target_idx:
-                inter.current_phase = target_idx
-                phase_elapsed = 0.0
-            served = min(inter.queues[target_idx], SATURATION_FLOW * DT)
-            inter.queues[target_idx] -= served
+            served = min(inter.queues[pedestrian_idx], SATURATION_FLOW * DT)
+            inter.queues[pedestrian_idx] -= served
             ev_time_in_phase += DT
             if ev_time_in_phase > 6:
                 print(f"[t={t:5.1f}s] Emergency vehicle CLEARED the intersection -- recovery cycle restores "
                       f"normal control")
                 ev_state = "done"
+                inter.current_phase = 0 if pedestrian_idx in PHASE_PAIRS[0] else 1
+                phase_elapsed = 0.0
         else:
-            cur = inter.current_phase
-            served = min(inter.queues[cur], SATURATION_FLOW * DT)
-            inter.queues[cur] -= served
+            a1, a2 = PHASE_PAIRS[inter.current_phase]
+            for i in (a1, a2):
+                served = min(inter.queues[i], SATURATION_FLOW * DT)
+                inter.queues[i] -= served
             phase_elapsed += DT
-            held_for_ped = pedestrian_active and APPROACHES_ORDER[cur] == pedestrian_approach
-            gap_out = inter.queues[cur] < 0.5 and phase_elapsed >= MIN_GREEN
+            held_for_ped = pedestrian_active and pedestrian_idx in (a1, a2)
+            gap_out = (inter.queues[a1] + inter.queues[a2]) < 1.0 and phase_elapsed >= MIN_GREEN
             max_out = phase_elapsed >= MAX_GREEN
             if not held_for_ped and (gap_out or max_out):
-                old = APPROACHES_ORDER[cur]
-                for _ in range(inter.n):
-                    inter.current_phase = (inter.current_phase + 1) % inter.n
-                    if inter.queues[inter.current_phase] > 0.4:
-                        break
-                new = APPROACHES_ORDER[inter.current_phase]
+                old_pair = f"{APPROACHES_ORDER[a1]}+{APPROACHES_ORDER[a2]}"
+                inter.current_phase = 1 - inter.current_phase
+                b1, b2 = PHASE_PAIRS[inter.current_phase]
+                new_pair = f"{APPROACHES_ORDER[b1]}+{APPROACHES_ORDER[b2]}"
                 phase_elapsed = 0.0
-                if step % 1 == 0:
-                    print(f"[t={t:5.1f}s] Phase advanced: {old} -> {new} "
-                          f"(queues N={inter.queues[0]:.0f} E={inter.queues[1]:.0f} "
-                          f"S={inter.queues[2]:.0f} W={inter.queues[3]:.0f})")
+                print(f"[t={t:5.1f}s] Phase advanced: {old_pair} -> {new_pair} "
+                      f"(queues N={inter.queues[0]:.0f} E={inter.queues[1]:.0f} "
+                      f"S={inter.queues[2]:.0f} W={inter.queues[3]:.0f})")
 
         # ---- sensing loop heartbeat (throttled print) ----
         if t >= next_sense:
@@ -424,9 +450,6 @@ def run_live_narrated():
 
     print("=" * 78)
     print("LIVE RUN complete.\n")
-
-
-APPROACHES_ORDER = ["N", "E", "S", "W"]
 
 
 # ========================================================================
@@ -486,7 +509,7 @@ if __name__ == "__main__":
     ]
 
     # ---- write results CSV ----
-    with open("/mnt/user-data/outputs/itms_verification_results.csv", "w", newline="") as f:
+    with open(os.path.join(OUTPUT_DIR, "itms_verification_results.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["Requirement", "Target", "Mean", "Worst-case / Value", "Status"])
         for row in results:
@@ -517,7 +540,7 @@ if __name__ == "__main__":
     ax.legend()
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig("/mnt/user-data/outputs/fig1_queue_comparison.png", dpi=150)
+    fig.savefig(os.path.join(OUTPUT_DIR, "fig1_queue_comparison.png"), dpi=150)
     plt.close(fig)
 
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
@@ -534,7 +557,7 @@ if __name__ == "__main__":
         ax_i.legend(fontsize=8)
     fig.suptitle("Sensing / Control-Loop Latency Distributions vs SR Targets")
     fig.tight_layout()
-    fig.savefig("/mnt/user-data/outputs/fig2_latency_distributions.png", dpi=150)
+    fig.savefig(os.path.join(OUTPUT_DIR, "fig2_latency_distributions.png"), dpi=150)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(9, 4))
@@ -547,7 +570,7 @@ if __name__ == "__main__":
     ax.legend(fontsize=8)
     plt.xticks(rotation=60, ha="right", fontsize=7)
     fig.tight_layout()
-    fig.savefig("/mnt/user-data/outputs/fig3_emergency_priority.png", dpi=150)
+    fig.savefig(os.path.join(OUTPUT_DIR, "fig3_emergency_priority.png"), dpi=150)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(9, 4))
@@ -564,7 +587,7 @@ if __name__ == "__main__":
     ax.set_title("Fault Detection -> Fallback -> Notification Timeline (SR-F06/F07)")
     ax.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig("/mnt/user-data/outputs/fig4_fault_fallback.png", dpi=150)
+    fig.savefig(os.path.join(OUTPUT_DIR, "fig4_fault_fallback.png"), dpi=150)
     plt.close(fig)
 
-    print("\nSaved: itms_verification_results.csv, fig1-fig4 PNGs to /mnt/user-data/outputs/")
+    print(f"\nSaved: itms_verification_results.csv, fig1-fig4 PNGs to {OUTPUT_DIR}/")
