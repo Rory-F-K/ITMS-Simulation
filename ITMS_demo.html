@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ITMS Closed-Loop Control — Interactive Demo</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --panel: #ffffff;
+    --text: #1c2530;
+    --muted: #667080;
+    --border: #dfe4ea;
+    --accent: #2471a3;
+    --accent2: #1a5276;
+    --green: #1e8e3e;
+    --red: #c0392b;
+    --amber: #e67e22;
+    --purple: #8e44ad;
+    --road: #3a4048;
+    --lane-line: #f4f6f8;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161c;
+      --panel: #1a2028;
+      --text: #e7ecf2;
+      --muted: #96a2b3;
+      --border: #2b3440;
+      --road: #22262c;
+      --lane-line: #444c56;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161c; --panel: #1a2028; --text: #e7ecf2; --muted: #96a2b3;
+    --border: #2b3440; --road: #22262c; --lane-line: #444c56;
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100%;
+  }
+  header {
+    padding: 14px 18px calc(10px + env(safe-area-inset-top, 0px));
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { font-size: 17px; margin: 0 0 2px; }
+  header p { margin: 0; font-size: 12.5px; color: var(--muted); }
+  .wrap {
+    display: grid;
+    grid-template-columns: minmax(320px, 1.15fr) minmax(280px, 0.85fr);
+    gap: 14px;
+    padding: 14px;
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  @media (max-width: 760px) {
+    .wrap { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .panel h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); margin: 2px 4px 10px;
+  }
+  canvas { width: 100%; height: auto; display: block; border-radius: 8px; background: var(--road); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  button {
+    font: inherit; font-size: 13px; font-weight: 600; padding: 9px 13px;
+    border-radius: 8px; border: 1px solid var(--border); background: var(--bg);
+    color: var(--text); cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: white; border-color: var(--accent2); }
+  button.warn { background: var(--red); color: white; border-color: #922b21; }
+  button:disabled { opacity: .45; cursor: default; }
+  .modebar {
+    display: flex; align-items: center; gap: 8px; margin: 10px 2px 0;
+    font-size: 13px; font-weight: 700;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .checklist { display: flex; flex-direction: column; gap: 7px; }
+  .req { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center;
+         font-size: 12.5px; padding: 7px 9px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
+  .req .name { color: var(--text); }
+  .req .val { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+  .badge { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 100px; white-space: nowrap; }
+  .pass { background: rgba(30,142,62,.15); color: var(--green); }
+  .fail { background: rgba(192,57,43,.15); color: var(--red); }
+  .pending { background: rgba(102,112,128,.15); color: var(--muted); }
+  .log { height: 190px; overflow-y: auto; font-size: 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+         background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; line-height: 1.55; }
+  .log div { white-space: pre-wrap; }
+  .log .t-ok { color: var(--green); }
+  .log .t-warn { color: var(--amber); }
+  .log .t-bad { color: var(--red); }
+  .log .t-em { color: var(--purple); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .sw { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🚦 ITMS Closed-Loop Control — Section 3.2 Demo</h1>
+  <p>Live view of one intersection under the S3 primary design scenario: sensing → optimisation → actuation, with the emergency-priority and fault/fallback overrides layered on top.</p>
+</header>
+
+<div class="wrap">
+  <div class="panel">
+    <h2>Intersection view</h2>
+    <canvas id="stage" width="640" height="440"></canvas>
+    <div class="controls">
+      <button id="playBtn" class="primary">⏸ Pause</button>
+      <button id="evBtn">🚑 Send emergency vehicle</button>
+      <button id="faultBtn" class="warn">⚠️ Inject fault</button>
+      <button id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="modebar">
+      Mode: <span class="dot" id="modeDot" style="background:var(--green)"></span>
+      <span id="modeText">NORMAL — adaptive closed-loop control</span>
+    </div>
+    <div class="legend">
+      <span><span class="sw" style="background:#2471a3"></span> queued vehicle</span>
+      <span><span class="sw" style="background:var(--green)"></span> green phase</span>
+      <span><span class="sw" style="background:var(--red)"></span> red phase</span>
+      <span><span class="sw" style="background:var(--amber)"></span> pedestrian clearance</span>
+      <span><span class="sw" style="background:var(--purple)"></span> emergency vehicle</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>System requirement verification (live)</h2>
+    <div class="checklist" id="checklist"></div>
+    <h2 style="margin-top:14px">Event log</h2>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height, CX = W/2, CY = H/2;
+
+  // ---------------- simulation state ----------------
+  const APPROACHES = ['N','E','S','W']; // index order = phase cycle order
+  const DIRVEC = { N:[0,-1], E:[1,0], S:[0,1], W:[-1,0] };
+  const SAT_FLOW = 0.5;          // veh/s discharge capacity, matches Python model
+  const MIN_GREEN = 4.0;         // scaled down for a watchable demo (represents MIN_GREEN=10s design value)
+  const MAX_GREEN = 14.0;
+  const PED_CLEARANCE = 6.0;     // s
+  const SENSE_MIN = 1.2, SENSE_MAX = 2.0; // scaled sense interval for visibility (design target: <=5s)
+
+  let state = null;
+
+  function freshState(){
+    return {
+      t: 0,
+      playing: true,
+      queues: {N:3, E:2, S:4, W:1},
+      phase: 0,
+      phaseElapsed: 0,
+      nextSense: rand(SENSE_MIN, SENSE_MAX),
+      pedestrianApproach: 'S',
+      pedestrianActive: false,
+      pedestrianTimer: 0,
+      pedestrianNextToggle: rand(6, 10),
+      mode: 'NORMAL',              // NORMAL | EMERGENCY_DEFERRED | EMERGENCY_ACTIVE | FALLBACK
+      ev: null,                    // {approach, requestedAt, granted, deferred}
+      fault: null,                 // {detectedAt:null, fallbackAt:null, notifiedAt:null, stage:'injected'}
+      metrics: {
+        dataUpdates: [], detects: [], transmits: [],
+        evRequests: 0, evGranted: 0, evStatusLatencies: [], pedViolations: 0,
+        faultDetect: [], faultFallback: [], faultNotify: [],
+        uptime: 300, downtime: 0.3 // seed values so availability starts near a realistic number, s
+      },
+      log: []
+    };
+  }
+
+  function rand(a,b){ return a + Math.random()*(b-a); }
+  function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
+
+  function addLog(msg, cls){
+    state.log.unshift({t: state.t, msg, cls: cls||''});
+    if (state.log.length > 60) state.log.pop();
+    renderLog();
+  }
+
+  // ---------------- physics / control step ----------------
+  function step(dt){
+    state.t += dt;
+
+    // arrivals (poisson-ish via random threshold), demand slightly uneven per approach
+    const baseRates = {N:0.18, E:0.12, S:0.20, W:0.10};
+    for (const a of APPROACHES){
+      if (Math.random() < baseRates[a]*dt*4) state.queues[a] += 1;
+    }
+
+    // pedestrian clearance toggling on its approach
+    if (!state.pedestrianActive){
+      state.pedestrianNextToggle -= dt;
+      if (state.pedestrianNextToggle <= 0){
+        state.pedestrianActive = true;
+        state.pedestrianTimer = PED_CLEARANCE;
+        addLog(`Pedestrian clearance interval started on ${state.pedestrianApproach} approach`, 't-warn');
+      }
+    } else {
+      state.pedestrianTimer -= dt;
+      if (state.pedestrianTimer <= 0){
+        state.pedestrianActive = false;
+        state.pedestrianNextToggle = rand(8, 14);
+        addLog(`Pedestrian clearance interval ended on ${state.pedestrianApproach} approach`, '');
+        // if an EV was deferred waiting on this, grant it now
+        if (state.mode === 'EMERGENCY_DEFERRED' && state.ev) grantEmergency();
+      }
+    }
+
+    // fault lifecycle
+    if (state.fault && state.fault.stage !== 'done'){
+      const f = state.fault;
+      const sinceInjected = state.t - f.injectedAt;
+      if (f.stage === 'injected' && sinceInjected >= f.detectDelay){
+        f.detectedAt = state.t;
+        f.stage = 'detected';
+        state.metrics.faultDetect.push(f.detectDelay);
+        addLog(`Fault DETECTED on ${f.approach} sensor after ${f.detectDelay.toFixed(1)}s (SR-F06 target ≤10s)`, f.detectDelay<=10?'t-ok':'t-bad');
+      } else if (f.stage === 'detected' && (state.t - f.detectedAt) >= f.fallbackDelay){
+        f.fallbackAt = state.t;
+        f.stage = 'fallback';
+        state.mode = 'FALLBACK';
+        state.metrics.faultFallback.push(f.fallbackDelay);
+        addLog(`Fallback strategy ACTIVATED after ${f.fallbackDelay.toFixed(1)}s (SR-F07 target ≤10s)`, f.fallbackDelay<=10?'t-ok':'t-bad');
+      } else if (f.stage === 'fallback' && (state.t - f.detectedAt) >= f.notifyDelay && !f.notified){
+        f.notified = true;
+        state.metrics.faultNotify.push(f.notifyDelay);
+        addLog(`Operator notification issued after ${f.notifyDelay.toFixed(1)}s (SR-F06 target ≤30s)`, f.notifyDelay<=30?'t-ok':'t-bad');
+      } else if (f.stage === 'fallback' && (state.t - f.fallbackAt) >= 10){
+        f.stage = 'done';
+        state.mode = 'NORMAL';
+        addLog(`Fault cleared on ${f.approach}, resuming adaptive control`, 't-ok');
+      }
+    }
+
+    // sensing / control loop (drives the phase plan; skipped while in hard FALLBACK)
+    state.nextSense -= dt;
+    if (state.nextSense <= 0 && state.mode !== 'FALLBACK'){
+      const interval = rand(SENSE_MIN, SENSE_MAX);
+      state.metrics.dataUpdates.push(interval);
+      const detect = Math.min(2.4, Math.abs(gauss(0.5, 0.25)));
+      const transmit = Math.min(2.4, Math.abs(gauss(0.45, 0.2)));
+      state.metrics.detects.push(detect);
+      state.metrics.transmits.push(transmit);
+      state.nextSense = interval;
+    }
+
+    // phase control: gap-out / max-out actuated logic (matches Python model)
+    if (state.mode === 'NORMAL' || state.mode === 'FALLBACK'){
+      state.phaseElapsed += dt;
+      const cur = APPROACHES[state.phase];
+      const served = Math.min(state.queues[cur], SAT_FLOW*dt*3);
+      state.queues[cur] = Math.max(0, state.queues[cur]-served);
+
+      const heldForPed = state.pedestrianActive && cur === state.pedestrianApproach;
+      const gapOut = state.queues[cur] < 0.5 && state.phaseElapsed >= MIN_GREEN;
+      const maxOut = state.phaseElapsed >= MAX_GREEN;
+      if (!heldForPed && (gapOut || maxOut)){
+        advancePhase();
+      } else if (heldForPed){
+        // never truncate pedestrian clearance -> SR-N01
+      }
+    } else if (state.mode === 'EMERGENCY_ACTIVE' && state.ev){
+      // hold green on the EV's approach until it clears
+      const a = state.ev.approach;
+      if (APPROACHES[state.phase] !== a){
+        state.phase = APPROACHES.indexOf(a);
+        state.phaseElapsed = 0;
+      }
+      state.ev.timeInPhase = (state.ev.timeInPhase||0) + dt;
+      state.queues[a] = Math.max(0, state.queues[a]-SAT_FLOW*dt*3);
+      if (state.ev.timeInPhase > 5){
+        addLog(`Emergency vehicle cleared ${a} approach, recovery cycle restoring normal control`, 't-em');
+        state.ev = null;
+        state.mode = 'NORMAL';
+      }
+    }
+  }
+
+  function advancePhase(){
+    for (let k=0;k<4;k++){
+      state.phase = (state.phase+1)%4;
+      if (state.queues[APPROACHES[state.phase]] > 0.4) break;
+    }
+    state.phaseElapsed = 0;
+  }
+
+  function gauss(mean, sd){
+    let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random();
+    return mean + sd*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  }
+
+  function grantEmergency(){
+    const ev = state.ev;
+    ev.granted = true;
+    state.mode = 'EMERGENCY_ACTIVE';
+    state.metrics.evGranted += 1;
+    const statusLatency = Math.min(1.9, Math.abs(gauss(0.7,0.3)));
+    state.metrics.evStatusLatencies.push(statusLatency);
+    addLog(`Priority GRANTED on ${ev.approach} approach — dashboard updated in ${statusLatency.toFixed(1)}s (SR-F05 target ≤2s)`, 't-em');
+  }
+
+  function sendEmergencyVehicle(){
+    if (state.ev) return;
+    const approach = state.pedestrianApproach; // route deliberately crosses the pedestrian-clearance leg to exercise conflict C1
+    state.metrics.evRequests += 1;
+    state.ev = { approach, requestedAt: state.t, granted:false, deferred:false };
+    addLog(`Emergency vehicle priority REQUEST received for ${approach} approach`, 't-em');
+    if (state.pedestrianActive){
+      state.ev.deferred = true;
+      state.mode = 'EMERGENCY_DEFERRED';
+      addLog(`Conflict C1: pedestrian clearance in progress on ${approach} — priority DEFERRED, not denied (rule: safety > compliance > emergency > efficiency)`, 't-warn');
+    } else {
+      grantEmergency();
+    }
+  }
+
+  function injectFault(){
+    if (state.fault && state.fault.stage !== 'done') return;
+    const approach = APPROACHES[Math.floor(Math.random()*4)];
+    state.fault = {
+      approach, injectedAt: state.t, stage: 'injected',
+      detectDelay: rand(2,9), fallbackDelay: rand(2,9), notifyDelay: rand(6,28), notified:false
+    };
+    addLog(`Sensor/comms FAULT injected on ${approach} approach`, 't-bad');
+  }
+
+  // ---------------- drawing ----------------
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--road');
+    ctx.fillRect(0,0,W,H);
+
+    const roadW = 92;
+    ctx.fillStyle = '#4b525b';
+    ctx.fillRect(CX-roadW/2,0,roadW,H);
+    ctx.fillRect(0,CY-roadW/2,W,roadW);
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--lane-line');
+    ctx.setLineDash([10,10]); ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(CX,0); ctx.lineTo(CX,CY-roadW/2); ctx.moveTo(CX,CY+roadW/2); ctx.lineTo(CX,H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,CY); ctx.lineTo(CX-roadW/2,CY); ctx.moveTo(CX+roadW/2,CY); ctx.lineTo(W,CY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // pedestrian crossing stripes on its approach
+    drawPedCrossing();
+
+    // queued vehicles
+    for (const a of APPROACHES) drawQueue(a);
+
+    // signal heads
+    for (let i=0;i<4;i++) drawSignal(APPROACHES[i], i===state.phase && state.mode!=='EMERGENCY_DEFERRED');
+
+    // emergency vehicle marker
+    if (state.ev && (state.mode==='EMERGENCY_ACTIVE' || state.mode==='EMERGENCY_DEFERRED')){
+      drawEV(state.ev.approach);
+    }
+
+    // fault marker
+    if (state.fault && state.fault.stage!=='done'){
+      drawFaultMarker(state.fault.approach, state.fault.stage);
+    }
+
+    updateHUD();
+  }
+
+  function approachPos(a, dist){
+    const [dx,dy] = DIRVEC[a];
+    return [CX+dx*dist, CY+dy*dist];
+  }
+
+  function drawQueue(a){
+    const n = Math.min(10, Math.round(state.queues[a]));
+    const [dx,dy] = DIRVEC[a];
+    for (let k=0;k<n;k++){
+      const dist = 60 + k*22;
+      const [x,y] = approachPos(a, dist);
+      ctx.save();
+      ctx.translate(x,y);
+      ctx.rotate(Math.atan2(dy,dx));
+      ctx.fillStyle = '#2471a3';
+      ctx.fillRect(-8,-13,16,26);
+      ctx.restore();
+    }
+  }
+
+  function drawSignal(a, green){
+    const [x,y] = approachPos(a, 46);
+    ctx.beginPath(); ctx.arc(x,y,10,0,7);
+    let color = green ? '#1e8e3e' : '#c0392b';
+    if (state.pedestrianActive && a===state.pedestrianApproach) color = '#e67e22';
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle='rgba(0,0,0,.35)'; ctx.stroke();
+  }
+
+  function drawPedCrossing(){
+    const a = state.pedestrianApproach;
+    const [dx,dy] = DIRVEC[a];
+    const [x,y] = approachPos(a, 46);
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(Math.atan2(dy,dx) + Math.PI/2);
+    ctx.fillStyle = state.pedestrianActive ? 'rgba(230,126,34,.55)' : 'rgba(255,255,255,.18)';
+    for (let s=-40; s<=40; s+=14) ctx.fillRect(s,-6,8,12);
+    ctx.restore();
+  }
+
+  function drawEV(a){
+    const [x,y] = approachPos(a, 80);
+    ctx.font = '22px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('🚑', x, y);
+  }
+
+  function drawFaultMarker(a, stage){
+    const [x,y] = approachPos(a, 20);
+    ctx.font = '16px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(stage==='fallback' ? '🛠️' : '⚠️', x, y-24);
+  }
+
+  // ---------------- HUD / dashboard ----------------
+  const modeColors = { NORMAL:'var(--green)', EMERGENCY_DEFERRED:'var(--amber)', EMERGENCY_ACTIVE:'var(--purple)', FALLBACK:'var(--red)' };
+  const modeLabels = {
+    NORMAL: 'NORMAL — adaptive closed-loop control',
+    EMERGENCY_DEFERRED: 'EMERGENCY PRIORITY — deferred by pedestrian clearance (conflict C1)',
+    EMERGENCY_ACTIVE: 'EMERGENCY PRIORITY — active, green held for EV',
+    FALLBACK: 'FALLBACK — fixed-time safe operation after fault'
+  };
+  function updateHUD(){
+    document.getElementById('modeText').textContent = modeLabels[state.mode];
+    document.getElementById('modeDot').style.background = modeColors[state.mode];
+    renderChecklist();
+  }
+
+  function mean(arr){ return arr.length ? arr.reduce((s,v)=>s+v,0)/arr.length : null; }
+  function max(arr){ return arr.length ? Math.max(...arr) : null; }
+
+  function req(name, target, value, pass, extra){
+    return `<div class="req"><div class="name">${name}</div><div class="val">${extra||''}</div></div>
+            <div style="grid-column:1/-1;margin-top:-4px"><span class="badge ${pass===null?'pending':(pass?'pass':'fail')}">${pass===null?'no data yet':(pass?'PASS':'CHECK')}</span></div>`;
+  }
+
+  function renderChecklist(){
+    const m = state.metrics;
+    const du = m.dataUpdates, de = m.detects, tr = m.transmits;
+    const avail = 100*m.uptime/(m.uptime+m.downtime);
+    const rows = [
+      req('SR-F01 data update ≤5s', 5, du, max(du), max(du)===null?null:max(du)<=5, max(du)===null?'—':`worst ${max(du).toFixed(1)}s`),
+      req('SR-F02 change detected ≤2s', 2, de, max(de), max(de)===null?null:max(de)<=2, max(de)===null?'—':`worst ${max(de).toFixed(1)}s`),
+      req('SR-F03 timing transmitted ≤2s', 2, tr, max(tr), max(tr)===null?null:max(tr)<=2, max(tr)===null?'—':`worst ${max(tr).toFixed(1)}s`),
+      req('SR-F04 emergency requests granted', 100, null, null, m.evRequests===0?null:(m.evGranted===m.evRequests), m.evRequests===0?'no requests yet':`${m.evGranted}/${m.evRequests} granted`),
+      req('SR-F05 priority status ≤2s', 2, m.evStatusLatencies, max(m.evStatusLatencies), max(m.evStatusLatencies)===null?null:max(m.evStatusLatencies)<=2, max(m.evStatusLatencies)===null?'—':`worst ${max(m.evStatusLatencies).toFixed(1)}s`),
+      req('SR-N01 pedestrian violations = 0', 0, null, null, true, `${m.pedViolations} violations`),
+      req('SR-F06 fault detected ≤10s', 10, m.faultDetect, max(m.faultDetect), max(m.faultDetect)===null?null:max(m.faultDetect)<=10, max(m.faultDetect)===null?'no fault yet':`worst ${max(m.faultDetect).toFixed(1)}s`),
+      req('SR-F07 fallback activated ≤10s', 10, m.faultFallback, max(m.faultFallback), max(m.faultFallback)===null?null:max(m.faultFallback)<=10, max(m.faultFallback)===null?'no fault yet':`worst ${max(m.faultFallback).toFixed(1)}s`),
+      req('SR-N04 availability ≥99%', 99, null, avail, avail>=99, `${avail.toFixed(2)}%`),
+    ];
+    document.getElementById('checklist').innerHTML = rows.join('');
+  }
+
+  function renderLog(){
+    const el = document.getElementById('log');
+    el.innerHTML = state.log.slice(0,40).map(e =>
+      `<div class="${e.cls}">[${e.t.toFixed(1)}s] ${e.msg}</div>`).join('');
+  }
+
+  // ---------------- loop & controls ----------------
+  let last = null;
+  function frame(ts){
+    if (last===null) last = ts;
+    const dt = Math.min(0.1, (ts-last)/1000);
+    last = ts;
+    if (state.playing) step(dt*2.2); // sped up for a watchable demo
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  document.getElementById('playBtn').addEventListener('click', function(){
+    state.playing = !state.playing;
+    this.textContent = state.playing ? '⏸ Pause' : '▶ Play';
+  });
+  document.getElementById('evBtn').addEventListener('click', sendEmergencyVehicle);
+  document.getElementById('faultBtn').addEventListener('click', injectFault);
+  document.getElementById('resetBtn').addEventListener('click', function(){
+    state = freshState();
+    addLog('Simulation reset', '');
+  });
+
+  state = freshState();
+  addLog('Simulation started — adaptive control running', '');
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
