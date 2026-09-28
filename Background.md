@@ -6,18 +6,12 @@
 
 This document explains what the simulation does, the engineering principles and
 equations behind each model, the assumptions made, and how to read the results.
-It's written so it can be lifted almost directly into the Section 3.2 write-up —
-adapt the wording to your own voice and add the actual literature citations
-(see the *References to verify* note at the end; the values used here are
-realistic, typical figures, not pulled from a specific cited source, so check
-them against a real reference before submitting).
 
 ---
 
 ## 1. What this models and why
  Primary Design Scenario selected for Part B is **S3 — Emergency
-Vehicle Priority**, which exercises the full closed control loop plus both
-override paths described in Section 2.6:
+Vehicle Priority**
  
 ```
 Sensing → Central Optimisation → Signal Actuation      (baseline loop, always running)
@@ -53,7 +47,7 @@ directory.
 | Pedestrian clearance time | 7 s | Illustrative: crossing distance 10 m ÷ walking speed 1.2 m/s + ~1 s reaction. |
 | Peak-period demand | Sinusoidal, average ≈ 0.21 veh/s/approach (per-approach y = q/s ≈ 0.40, sum Y ≈ 0.80 across the two phase pairs) | An oversaturated intersection (Y ≥ 1) has queues that grow without bound regardless of control strategy — that would make *any* comparison between fixed-time and adaptive control meaningless, since neither could keep up with demand. |
 | MTBF (controller) | 1500 h | Derived from Victorian traffic-signal availability of 99.8% and a 3 h critical-fault rectification benchmark: MTBF = A×MTTR/(1−A) ≈ 1497 h |
-| MTTR | 4 h | Representative figure — same caveat |
+| MTTR | 3h | from above |
 | Simulation step | 1 s | Fine enough to resolve second-level SR targets without excessive runtime |
 
 
@@ -76,7 +70,7 @@ Q(t+dt) = Q(t) + arrivals(t)·dt − min(Q(t), s·dt)   [only during green]
 This is a standard deterministic/stochastic queueing approximation used in
 traffic engineering for signal-timing analysis — it is not a full
 microsimulation (no individual vehicle positions, car-following, or
-lane-changing), which is an appropriate level of fidelity for a
+lane-changing), but should be sufficient for a
 system-requirements verification model.
 
 ### 3.2 Fixed-time baseline — Webster's optimal cycle
@@ -95,16 +89,12 @@ where:
 ```
 
 This plan is calculated once from the *long-run average* demand and then
-never changes — exactly how a real time-of-day fixed-time signal operates.
+never changes.
 
 ### 3.3 Adaptive control — fully vehicle-actuated logic
 
-The adaptive controller does **not** just recompute Webster's formula more
-often (an earlier version of this model tried that and it was numerically
-unstable — Webster's formula is very sensitive near saturation and produces
-wildly swinging cycle lengths if re-solved on a few seconds of noisy count
-data). Instead it uses standard **vehicle-actuated signal control** logic
-(see Roess, Prassas & McShane, *Traffic Engineering*):
+The adaptive controller uses standard **vehicle-actuated signal control** logic
+(see Tom V. Mathew, *Vehicle Actuated Signals*):
 
 - Each phase serves its approach for at least `MIN_GREEN`.
 - It continues to hold green only while that approach still has a queue
@@ -126,8 +116,7 @@ Every sensing cycle draws:
 - **Transmission latency** — |Normal(0.9 s, 0.4 s)|, capped at 2.5 s, verifying SR-F03 (≤2 s)
 
 These are bounded stochastic models representing realistic jitter in a
-sensor-to-controller communications link, not measured hardware data — flag
-them as *assumed* distributions in your report, not measured results.
+sensor-to-controller communications link.
 
 ### 3.5 Emergency priority + conflict C1 (SR-F04, F05, N01)
 
@@ -135,7 +124,7 @@ Implements the precedence rule established in Part A:
 **safety > compliance > emergency > efficiency**.
 
 - If a pedestrian clearance interval is already running on the requested
-  approach, the emergency request is **deferred, never denied** — it waits
+  approach, the emergency request is deferred, never denied — it waits
   for the remaining clearance time, then is granted. This is conflict C1.
 - If there is no conflict, the request is granted immediately (after a
   small actuation-latency draw).
@@ -144,10 +133,7 @@ Implements the precedence rule established in Part A:
 - Because the design deferrs rather than truncates, the pedestrian
   clearance interval is *never* shortened → SR-N01 (0 violations) holds by
   construction, and every request eventually reaches "granted" → SR-F04
-  (100%) holds by construction. This is worth saying explicitly in your
-  report: these two results follow from the *design rule*, and the
-  simulation is really verifying that the rule is applied consistently
-  under load, not "discovering" a 100% pass rate empirically.
+  (100%) holds by construction.
 
 ### 3.6 Fault detection & fallback (SR-F06, F07, SR-N02)
 
@@ -160,7 +146,7 @@ notify_latency   ~ |Normal(14.0 s, 6.0 s)|, capped 29.0 s -> SR-F06 (<=30s), fro
 ```
 
 Once fallback activates, the affected intersection reverts to the safe
-fixed-time (Webster) plan until the fault clears — this is the SR-N02
+fixed-time (Webster) plan until the fault clears — the SR-N02
 "single failure does not remove traffic control" requirement.
 
 ### 3.7 Reliability / availability (SR-N04)
@@ -172,10 +158,8 @@ A = MTBF / (MTBF + MTTR)
 ```
 
 With MTBF = 4000 h and MTTR = 4 h, `A ≈ 99.90%`, which satisfies the
-SR-N04 target of ≥99%. **This is an analytical calculation, not something
-derived from the discrete-event simulation** — say so explicitly. It's a
-standard back-of-envelope reliability estimate; a rigorous version would
-use failure data from comparable deployed ITS controllers.
+SR-N04 target of ≥99%. This is an analytical calculation, not something
+derived from the discrete-event simulation.
 
 ---
 
@@ -211,34 +195,21 @@ Full numbers are in `itms_verification_results.csv`; figures are
 - `fig4_fault_fallback.png` — detect/fallback/notify timeline for each
   injected fault against the 10 s / 10 s / 30 s targets.
 
-### The SR-F02 near-miss — keep this, don't hide it
+### The SR-F02 near-miss
 
 Across repeated runs, the worst-case detection latency occasionally lands
 just over the 2 s target (typically 2.0–2.3 s), while the mean sits
-comfortably under 1 s. This is a genuinely useful finding for **Section 4.4
-(Validation, Evidence and Performance Gaps)** and **Section 5.1 (Critical
-Evaluation)**: it shows the detection sub-function has a thin margin against
+comfortably under 1 s. Shows the detection sub-function has a thin margin against
 its target under the assumed latency distribution, not that the design is
-broken. Two honest ways to frame it:
+broken.
 
 - The 2 s target may need a small implementation margin (e.g. specify
   hardware/software with a 99th-percentile detection latency below 1.5 s,
   not just "under 2 s on average").
-- Alternatively, this could motivate tightening SR-F02's verification
-  method in acceptance testing (percentile-based rather than pass/fail on a
-  single trial).
-
-A report that shows 100% pass on every single requirement with no
-discussion of margin tends to read as less credible than one that shows
-where the design is tight — use this one.
 
 ---
 
 ## 5. What's simplified / out of scope
-
-Be upfront about these in your report - a marker will recognise a model
-that's honest about its limits far more favourably than one presented as
-more complete than it is:
 
 - **Not a microsimulation.** No individual vehicle positions, car-following,
   lane-changing, or turning movements - queues are treated as aggregate
@@ -261,15 +232,4 @@ more complete than it is:
 Melbourne (2019)](https://australasiantransportresearchforum.org.au/wp-content/uploads/2022/03/ATRF2019_resubmission_29.pdf)
 - Pedestrian clearance time / walking speed 1.2s — [Austroads Guide to Road Design Part 4A, 2023, page 28](https://www.scribd.com/document/681722685/AGRD04A-23-Guide-to-Road-Design-Part-4A-Unsignalised-and-Signalised-Intersections-Ed3-2)
 - [Austroads AGSM-16-Guide To Smart Motorways](https://pdfcoffee.com/agsm-16-guide-to-smart-motorways-pdf-pdf-free.html)
-- Vehicle-actuated control logic (extend/gap-out/max-out) — a traffic
-  signal control textbook, e.g. Roess, R.P., Prassas, E.S. and McShane,
-  W.R., *Traffic Engineering*.
-
-
-
----
-
-## 7. Interactive demo
-
-A visual, clickable version of this closed loop (one intersection, live SR
-checklist, "send emergency vehicle" and "inject fault" buttons).
+- [Vehicle Actuated Signals - Prof. Tom V. Mathew](https://www.civil.iitb.ac.in/tvm/nptel/576_VAS/web/web.html)
